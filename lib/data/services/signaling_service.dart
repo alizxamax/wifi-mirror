@@ -1,18 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/models.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/utils/logger.dart';
 
+// Conditional imports for platform-specific code
+import 'signaling_service_stub.dart'
+    if (dart.library.io) 'signaling_service_io.dart'
+    as platform_impl;
+
 /// Service for WebRTC signaling between peers
+///
+/// On native platforms, this uses TCP sockets.
+/// On web, this uses WebSockets to connect to the host's WebSocket server.
 class SignalingService {
   static const String _module = 'Signaling';
-
-  ServerSocket? _server;
-  Socket? _clientSocket;
-
-  final Map<String, Socket> _connectedPeers = {};
 
   final StreamController<SignalingMessage> _messageController =
       StreamController<SignalingMessage>.broadcast();
@@ -26,6 +30,16 @@ class SignalingService {
   String? _localDeviceId;
   bool _isServer = false;
   bool _isRunning = false;
+
+  // Platform-specific implementation for native
+  late final platform_impl.SignalingPlatform _platformImpl;
+
+  // WebSocket for web clients
+  WebSocketChannel? _webSocketChannel;
+
+  SignalingService() {
+    _platformImpl = platform_impl.SignalingPlatform(this);
+  }
 
   /// Stream of incoming signaling messages
   Stream<SignalingMessage> get messageStream => _messageController.stream;
@@ -44,7 +58,7 @@ class SignalingService {
   bool get isServer => _isServer;
 
   /// Number of connected peers
-  int get connectedPeerCount => _connectedPeers.length;
+  int get connectedPeerCount => _platformImpl.connectedPeerCount;
 
   /// Initialize service with local device ID
   void initialize(String deviceId) {
@@ -56,30 +70,31 @@ class SignalingService {
   }
 
   /// Start as server (for screen sharer / host)
+  /// Not supported on web
   Future<void> startServer() async {
+    if (kIsWeb) {
+      AppLogger.warning(
+        'Starting signaling server not supported on web',
+        _module,
+      );
+      throw UnsupportedError('Cannot start signaling server on web platform');
+    }
+
     if (_isRunning) {
       AppLogger.warning('Signaling service already running', _module);
       return;
     }
 
     try {
-      _server = await ServerSocket.bind(
-        InternetAddress.anyIPv4,
-        AppConstants.signalingPort,
+      await _platformImpl.startServer(
+        port: AppConstants.signalingPort,
+        onMessage: _handleMessage,
+        onPeerConnected: (peerId) => _peerConnectedController.add(peerId),
+        onPeerDisconnected: (peerId) => _peerDisconnectedController.add(peerId),
       );
 
       _isServer = true;
       _isRunning = true;
-
-      _server!.listen(
-        _handleClientConnection,
-        onError: (error) {
-          AppLogger.error('Server error', error, null, _module);
-        },
-        onDone: () {
-          AppLogger.info('Server closed', _module);
-        },
-      );
 
       AppLogger.info(
         'Signaling server started on port ${AppConstants.signalingPort}',
@@ -92,135 +107,17 @@ class SignalingService {
     }
   }
 
-  /// Handle incoming client connection
-  void _handleClientConnection(Socket client) {
-    final clientId = '${client.remoteAddress.address}:${client.remotePort}';
-    AppLogger.info('Client connected: $clientId', _module);
-
-    String buffer = '';
-
-    client.listen(
-      (data) {
-        buffer += utf8.decode(data);
-        _processBuffer(buffer, client, (remaining) => buffer = remaining);
-      },
-      onError: (error) {
-        AppLogger.error('Client error: $clientId', error, null, _module);
-        _handleClientDisconnect(clientId, client);
-      },
-      onDone: () {
-        _handleClientDisconnect(clientId, client);
-      },
-    );
-  }
-
-  /// Process incoming data buffer
-  void _processBuffer(
-    String buffer,
-    Socket socket,
-    Function(String) updateBuffer,
-  ) {
-    // Messages are newline-delimited JSON
-    while (buffer.contains('\n')) {
-      final index = buffer.indexOf('\n');
-      final messageStr = buffer.substring(0, index);
-      buffer = buffer.substring(index + 1);
-
-      try {
-        final json = jsonDecode(messageStr);
-        final message = SignalingMessage.fromJson(json);
-        _handleMessage(message, socket);
-      } catch (e) {
-        AppLogger.error(
-          'Failed to parse message: $messageStr',
-          e,
-          null,
-          _module,
-        );
-      }
-    }
-    updateBuffer(buffer);
-  }
-
   /// Handle incoming signaling message
-  void _handleMessage(SignalingMessage message, Socket socket) {
+  void _handleMessage(SignalingMessage message) {
     AppLogger.debug(
       'Received message: ${message.type} from ${message.senderId}',
       _module,
     );
 
-    switch (message.type) {
-      case SignalingType.joinRequest:
-        // Register the peer
-        _connectedPeers[message.senderId] = socket;
-        _peerConnectedController.add(message.senderId);
-        break;
-
-      case SignalingType.disconnect:
-        _connectedPeers.remove(message.senderId);
-        _peerDisconnectedController.add(message.senderId);
-        break;
-
-      case SignalingType.ping:
-        // Respond with pong
-        sendMessage(
-          SignalingMessage(
-            type: SignalingType.pong,
-            senderId: _localDeviceId!,
-            targetId: message.senderId,
-          ),
-        );
-        return;
-
-      default:
-        break;
-    }
-
     // Forward message to listeners
     if (!_messageController.isClosed) {
       _messageController.add(message);
     }
-
-    // If we're server and message has a target, forward it
-    if (_isServer &&
-        message.targetId != null &&
-        message.targetId != _localDeviceId) {
-      _forwardMessage(message);
-    }
-  }
-
-  /// Forward message to target peer
-  void _forwardMessage(SignalingMessage message) {
-    final targetSocket = _connectedPeers[message.targetId];
-    if (targetSocket != null) {
-      _sendToSocket(targetSocket, message);
-    } else {
-      AppLogger.warning(
-        'Cannot forward message, target not found: ${message.targetId}',
-        _module,
-      );
-    }
-  }
-
-  /// Handle client disconnect
-  void _handleClientDisconnect(String clientId, Socket client) {
-    // Find the device ID for this socket
-    String? deviceId;
-    _connectedPeers.forEach((id, socket) {
-      if (socket == client) {
-        deviceId = id;
-      }
-    });
-
-    if (deviceId != null) {
-      _connectedPeers.remove(deviceId);
-      _peerDisconnectedController.add(deviceId!);
-      AppLogger.info('Client disconnected: $deviceId', _module);
-    }
-
-    try {
-      client.close();
-    } catch (_) {}
   }
 
   /// Connect to a server (for viewer / client)
@@ -230,29 +127,44 @@ class SignalingService {
       return;
     }
 
+    if (kIsWeb) {
+      // Use WebSocket on web
+      await _connectWebSocket(host, port);
+    } else {
+      // Use TCP socket on native
+      await _connectNative(host, port);
+    }
+  }
+
+  /// Connect using WebSocket (web platform)
+  Future<void> _connectWebSocket(String host, int port) async {
     try {
-      _clientSocket = await Socket.connect(
-        host,
-        port,
-        timeout: AppConstants.connectionTimeout,
-      );
+      // WebSocket port is signaling port + 1
+      final wsUrl = 'ws://$host:${port + 1}';
+      AppLogger.info('Connecting to WebSocket: $wsUrl', _module);
+
+      _webSocketChannel = WebSocketChannel.connect(Uri.parse(wsUrl));
 
       _isServer = false;
       _isRunning = true;
 
-      String buffer = '';
-
-      _clientSocket!.listen(
+      _webSocketChannel!.stream.listen(
         (data) {
-          buffer += utf8.decode(data);
-          _processBuffer(
-            buffer,
-            _clientSocket!,
-            (remaining) => buffer = remaining,
-          );
+          try {
+            final json = jsonDecode(data as String);
+            final message = SignalingMessage.fromJson(json);
+            _handleMessage(message);
+          } catch (e) {
+            AppLogger.error(
+              'Failed to parse WebSocket message',
+              e,
+              null,
+              _module,
+            );
+          }
         },
         onError: (error) {
-          AppLogger.error('Connection error', error, null, _module);
+          AppLogger.error('WebSocket error', error, null, _module);
           _handleDisconnect();
         },
         onDone: () {
@@ -267,6 +179,28 @@ class SignalingService {
           targetId: 'server',
         ),
       );
+
+      AppLogger.info('Connected to signaling server via WebSocket', _module);
+    } catch (e, stack) {
+      AppLogger.error('Failed to connect via WebSocket', e, stack, _module);
+      _isRunning = false;
+      rethrow;
+    }
+  }
+
+  /// Connect using TCP socket (native platform)
+  Future<void> _connectNative(String host, int port) async {
+    try {
+      await _platformImpl.connectToServer(
+        host: host,
+        port: port,
+        localDeviceId: _localDeviceId!,
+        onMessage: _handleMessage,
+        onDisconnected: _handleDisconnect,
+      );
+
+      _isServer = false;
+      _isRunning = true;
 
       AppLogger.info('Connected to signaling server at $host:$port', _module);
     } catch (e, stack) {
@@ -285,7 +219,7 @@ class SignalingService {
   void _handleDisconnect() {
     AppLogger.info('Disconnected from server', _module);
     _isRunning = false;
-    _clientSocket = null;
+    _webSocketChannel = null;
   }
 
   /// Send a signaling message
@@ -295,38 +229,18 @@ class SignalingService {
       return;
     }
 
-    if (_isServer) {
-      // Send to specific target or broadcast
-      if (message.targetId != null) {
-        final targetSocket = _connectedPeers[message.targetId];
-        if (targetSocket != null) {
-          _sendToSocket(targetSocket, message);
-        }
-      } else {
-        // Broadcast to all connected peers
-        for (final socket in _connectedPeers.values) {
-          _sendToSocket(socket, message);
-        }
+    if (kIsWeb && _webSocketChannel != null) {
+      // Send via WebSocket on web
+      try {
+        final jsonStr = jsonEncode(message.toJson());
+        _webSocketChannel!.sink.add(jsonStr);
+        AppLogger.debug('Sent message via WebSocket: ${message.type}', _module);
+      } catch (e) {
+        AppLogger.error('Failed to send WebSocket message', e, null, _module);
       }
     } else {
-      // Send to server
-      if (_clientSocket != null) {
-        _sendToSocket(_clientSocket!, message);
-      }
-    }
-  }
-
-  /// Send message to socket
-  void _sendToSocket(Socket socket, SignalingMessage message) {
-    try {
-      final jsonStr = jsonEncode(message.toJson());
-      socket.write('$jsonStr\n');
-      AppLogger.debug(
-        'Sent message: ${message.type} to ${message.targetId ?? 'all'}',
-        _module,
-      );
-    } catch (e) {
-      AppLogger.error('Failed to send message', e, null, _module);
+      // Send via platform implementation (TCP socket)
+      _platformImpl.sendMessage(message, localDeviceId: _localDeviceId!);
     }
   }
 
@@ -339,24 +253,14 @@ class SignalingService {
       sendMessage(SignalingMessage.disconnect(senderId: _localDeviceId!));
     }
 
-    // Close all peer connections
-    for (final socket in _connectedPeers.values) {
-      try {
-        await socket.close();
-      } catch (_) {}
-    }
-    _connectedPeers.clear();
-
-    // Close server or client socket
-    if (_isServer && _server != null) {
-      await _server!.close();
-      _server = null;
+    // Close WebSocket if on web
+    if (_webSocketChannel != null) {
+      await _webSocketChannel!.sink.close();
+      _webSocketChannel = null;
     }
 
-    if (_clientSocket != null) {
-      await _clientSocket!.close();
-      _clientSocket = null;
-    }
+    // Close native connections
+    await _platformImpl.stop();
 
     _isRunning = false;
     _isServer = false;

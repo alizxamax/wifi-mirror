@@ -1,17 +1,20 @@
 import 'dart:async';
-import 'dart:io';
-import 'package:bonsoir/bonsoir.dart';
-import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/models.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/utils/logger.dart';
 
+// Conditional imports for platform-specific code
+import 'network_discovery_service_stub.dart'
+    if (dart.library.io) 'network_discovery_service_io.dart'
+    as platform_impl;
+
 /// Service for discovering and advertising devices on the local network using mDNS
+///
+/// On web platform, mDNS discovery is not supported. Users must manually connect
+/// by entering the host device's IP address and port.
 class NetworkDiscoveryService {
   static const String _module = 'NetworkDiscovery';
-
-  BonsoirBroadcast? _broadcast;
-  BonsoirDiscovery? _discovery;
 
   final StreamController<List<NetworkDevice>> _devicesController =
       StreamController<List<NetworkDevice>>.broadcast();
@@ -24,6 +27,13 @@ class NetworkDiscoveryService {
   bool _isSharing = false;
   bool _isBroadcasting = false;
   bool _isDiscovering = false;
+
+  // Platform-specific implementation
+  late final platform_impl.NetworkDiscoveryPlatform _platformImpl;
+
+  NetworkDiscoveryService() {
+    _platformImpl = platform_impl.NetworkDiscoveryPlatform(this);
+  }
 
   /// Stream of discovered devices
   Stream<List<NetworkDevice>> get devicesStream => _devicesController.stream;
@@ -38,6 +48,9 @@ class NetworkDiscoveryService {
   /// Whether we are broadcasting our service
   bool get isBroadcasting => _isBroadcasting;
 
+  /// Whether network discovery is supported on this platform
+  bool get isDiscoverySupported => !kIsWeb;
+
   /// Initialize the service
   Future<void> initialize() async {
     AppLogger.info('Initializing network discovery service', _module);
@@ -46,35 +59,21 @@ class NetworkDiscoveryService {
 
   /// Get device information
   Future<void> _initializeDeviceInfo() async {
-    final deviceInfo = DeviceInfoPlugin();
+    if (kIsWeb) {
+      // Web platform: Use basic info
+      _localDeviceName = 'Web Browser';
+      _localDeviceType = DeviceType.unknown;
+      _localDeviceId = 'web-${DateTime.now().millisecondsSinceEpoch}';
+      AppLogger.info('Web device initialized: $_localDeviceName', _module);
+      return;
+    }
 
+    // Native platforms: Get detailed device info
     try {
-      if (Platform.isAndroid) {
-        final info = await deviceInfo.androidInfo;
-        _localDeviceName = info.model;
-        _localDeviceType = DeviceType.android;
-        _localDeviceId = info.id;
-      } else if (Platform.isIOS) {
-        final info = await deviceInfo.iosInfo;
-        _localDeviceName = info.name;
-        _localDeviceType = DeviceType.ios;
-        _localDeviceId = info.identifierForVendor;
-      } else if (Platform.isMacOS) {
-        final info = await deviceInfo.macOsInfo;
-        _localDeviceName = info.computerName;
-        _localDeviceType = DeviceType.macos;
-        _localDeviceId = info.systemGUID;
-      } else if (Platform.isWindows) {
-        final info = await deviceInfo.windowsInfo;
-        _localDeviceName = info.computerName;
-        _localDeviceType = DeviceType.windows;
-        _localDeviceId = info.deviceId;
-      } else if (Platform.isLinux) {
-        final info = await deviceInfo.linuxInfo;
-        _localDeviceName = info.prettyName;
-        _localDeviceType = DeviceType.linux;
-        _localDeviceId = info.machineId;
-      }
+      final info = await _platformImpl.getDeviceInfo();
+      _localDeviceName = info['name'];
+      _localDeviceType = DeviceType.fromString(info['type'] ?? 'unknown');
+      _localDeviceId = info['id'];
 
       AppLogger.info(
         'Device info: $_localDeviceName (${_localDeviceType?.name})',
@@ -90,6 +89,11 @@ class NetworkDiscoveryService {
 
   /// Start broadcasting our service on the network
   Future<void> startBroadcast({bool isSharing = false}) async {
+    if (kIsWeb) {
+      AppLogger.warning('Broadcasting not supported on web', _module);
+      return;
+    }
+
     if (_isBroadcasting) {
       AppLogger.warning('Broadcast already running', _module);
       return;
@@ -98,9 +102,9 @@ class NetworkDiscoveryService {
     _isSharing = isSharing;
 
     try {
-      final service = BonsoirService(
-        name: _localDeviceName ?? 'WiFi Mirror Device',
-        type: AppConstants.serviceType,
+      await _platformImpl.startBroadcast(
+        serviceName: _localDeviceName ?? 'WiFi Mirror Device',
+        serviceType: AppConstants.serviceType,
         port: AppConstants.servicePort,
         attributes: {
           'device_id': _localDeviceId ?? '',
@@ -110,12 +114,11 @@ class NetworkDiscoveryService {
         },
       );
 
-      _broadcast = BonsoirBroadcast(service: service);
-      await _broadcast!.initialize();
-      await _broadcast!.start();
       _isBroadcasting = true;
-
-      AppLogger.info('Started broadcasting service: ${service.name}', _module);
+      AppLogger.info(
+        'Started broadcasting service: $_localDeviceName',
+        _module,
+      );
     } catch (e, stack) {
       AppLogger.error('Failed to start broadcast', e, stack, _module);
       _isBroadcasting = false;
@@ -125,11 +128,10 @@ class NetworkDiscoveryService {
 
   /// Stop broadcasting our service
   Future<void> stopBroadcast() async {
-    if (!_isBroadcasting || _broadcast == null) return;
+    if (kIsWeb || !_isBroadcasting) return;
 
     try {
-      await _broadcast!.stop();
-      _broadcast = null;
+      await _platformImpl.stopBroadcast();
       _isBroadcasting = false;
       AppLogger.info('Stopped broadcasting', _module);
     } catch (e, stack) {
@@ -151,6 +153,20 @@ class NetworkDiscoveryService {
 
   /// Start discovering devices on the network
   Future<void> startDiscovery() async {
+    if (kIsWeb) {
+      AppLogger.warning(
+        'Network discovery not supported on web. Use manual connection.',
+        _module,
+      );
+      // Mark as discovering briefly then stop (for UI feedback)
+      _isDiscovering = true;
+      _notifyDevicesChanged();
+      await Future.delayed(const Duration(milliseconds: 500));
+      _isDiscovering = false;
+      _notifyDevicesChanged();
+      return;
+    }
+
     if (_isDiscovering) {
       AppLogger.warning('Discovery already running', _module);
       return;
@@ -158,16 +174,15 @@ class NetworkDiscoveryService {
 
     try {
       _discoveredDevices.clear();
-      _discovery = BonsoirDiscovery(type: AppConstants.serviceType);
-      await _discovery!.initialize();
 
-      _discovery!.eventStream!.listen((event) {
-        _handleDiscoveryEvent(event);
-      });
+      await _platformImpl.startDiscovery(
+        serviceType: AppConstants.serviceType,
+        localDeviceId: _localDeviceId,
+        onDeviceFound: _handleDeviceFound,
+        onDeviceLost: _handleDeviceLost,
+      );
 
-      await _discovery!.start();
       _isDiscovering = true;
-
       AppLogger.info('Started device discovery', _module);
     } catch (e, stack) {
       AppLogger.error('Failed to start discovery', e, stack, _module);
@@ -176,86 +191,60 @@ class NetworkDiscoveryService {
     }
   }
 
-  /// Handle discovery events using pattern matching (Bonsoir 6.0 API)
-  void _handleDiscoveryEvent(BonsoirDiscoveryEvent event) {
-    switch (event) {
-      case BonsoirDiscoveryServiceFoundEvent():
-        AppLogger.debug('Service found: ${event.service.name}', _module);
-        // Resolve the service to get IP address
-        event.service.resolve(_discovery!.serviceResolver);
-        break;
-
-      case BonsoirDiscoveryServiceResolvedEvent():
-        _handleServiceResolved(event.service);
-        break;
-
-      // Add handling for updated events
-      case BonsoirDiscoveryServiceUpdatedEvent():
-        AppLogger.debug('Service updated: ${event.service.name}', _module);
-        // The service might already be resolved, so we handle it as resolved
-        _handleServiceResolved(event.service);
-        break;
-
-      case BonsoirDiscoveryServiceLostEvent():
-        _handleServiceLost(event.service);
-        break;
-
-      default:
-        AppLogger.debug('Discovery event: $event', _module);
-        break;
-    }
-  }
-
-  /// Handle when a service is fully resolved
-  void _handleServiceResolved(BonsoirService service) {
+  /// Handle when a device is found
+  void _handleDeviceFound(NetworkDevice device) {
     // Skip our own device
-    final deviceId = service.attributes['device_id'];
-    if (deviceId == _localDeviceId) {
+    if (device.id == _localDeviceId) {
       AppLogger.debug('Ignoring own device', _module);
       return;
     }
-
-    // In Bonsoir 6.0, after resolution, BonsoirService has a 'host' property
-    // that contains the IP address/hostname of the resolved service.
-    final String ipAddress = service.host ?? '';
-
-    final device = NetworkDevice.fromServiceInfo(
-      name: service.name,
-      ip: ipAddress,
-      port: service.port,
-      txtRecords: service.attributes,
-    );
 
     _discoveredDevices[device.id] = device;
     _notifyDevicesChanged();
 
     AppLogger.info(
-      'Resolved device: ${device.name} (${device.ipAddress}:${device.port})',
+      'Found device: ${device.name} (${device.ipAddress}:${device.port})',
       _module,
     );
   }
 
-  /// Handle when a service is lost
-  void _handleServiceLost(BonsoirService service) {
-    final deviceId = service.attributes['device_id'];
-    if (deviceId != null && _discoveredDevices.containsKey(deviceId)) {
+  /// Handle when a device is lost
+  void _handleDeviceLost(String deviceId) {
+    if (_discoveredDevices.containsKey(deviceId)) {
       _discoveredDevices.remove(deviceId);
       _notifyDevicesChanged();
-      AppLogger.info('Service lost: ${service.name}', _module);
+      AppLogger.info('Device lost: $deviceId', _module);
     }
   }
 
   /// Stop discovering devices
   Future<void> stopDiscovery() async {
-    if (!_isDiscovering || _discovery == null) return;
+    if (kIsWeb || !_isDiscovering) return;
 
     try {
-      await _discovery!.stop();
-      _discovery = null;
+      await _platformImpl.stopDiscovery();
       _isDiscovering = false;
       AppLogger.info('Stopped discovery', _module);
     } catch (e, stack) {
       AppLogger.error('Failed to stop discovery', e, stack, _module);
+    }
+  }
+
+  /// Add a manually connected device
+  void addManualDevice(NetworkDevice device) {
+    _discoveredDevices[device.id] = device;
+    _notifyDevicesChanged();
+    AppLogger.info(
+      'Manually added device: ${device.name} (${device.ipAddress}:${device.port})',
+      _module,
+    );
+  }
+
+  /// Remove a manually connected device
+  void removeDevice(String deviceId) {
+    if (_discoveredDevices.containsKey(deviceId)) {
+      _discoveredDevices.remove(deviceId);
+      _notifyDevicesChanged();
     }
   }
 

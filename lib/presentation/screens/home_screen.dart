@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -55,6 +56,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> _startSharing() async {
+    if (kIsWeb) {
+      // Web cannot share screen, only view
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Screen sharing is not available on web. You can only view shared screens.',
+          ),
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isStartingShare = true);
 
     try {
@@ -100,12 +114,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
+  Future<void> _showManualConnectionDialog() async {
+    final device = await showDialog<NetworkDevice>(
+      context: context,
+      builder: (context) => const ManualConnectionDialog(),
+    );
+
+    if (device != null) {
+      // Add the device to discovered devices
+      ref.read(networkDiscoveryServiceProvider).addManualDevice(device);
+      // Connect to it
+      await _connectToDevice(device);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final devices = ref.watch(discoveredDevicesProvider);
     final isDiscovering = ref.watch(isDiscoveringProvider);
+    final discoveryService = ref.watch(networkDiscoveryServiceProvider);
+    final isDiscoverySupported = discoveryService.isDiscoverySupported;
 
     return Scaffold(
       body: SafeArea(
@@ -137,17 +167,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+                  if (kIsWeb) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'WEB',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: colorScheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
               actions: [
-                IconButton(
-                  onPressed: _startDiscovery,
-                  icon: AnimatedRotation(
-                    duration: const Duration(milliseconds: 500),
-                    turns: isDiscovering ? 1 : 0,
-                    child: const Icon(Icons.refresh_rounded),
+                if (isDiscoverySupported)
+                  IconButton(
+                    onPressed: _startDiscovery,
+                    icon: AnimatedRotation(
+                      duration: const Duration(milliseconds: 500),
+                      turns: isDiscovering ? 1 : 0,
+                      child: const Icon(Icons.refresh_rounded),
+                    ),
                   ),
-                ),
                 IconButton(
                   onPressed: () {
                     Navigator.of(context).push(
@@ -165,11 +216,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               padding: const EdgeInsets.all(20),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-                  // Share My Screen Card
-                  _buildShareCard(theme)
-                      .animate()
-                      .fadeIn(duration: 400.ms)
-                      .slideY(begin: 0.1, end: 0),
+                  // Web Platform Notice
+                  if (kIsWeb) ...[
+                    _buildWebPlatformNotice(theme)
+                        .animate()
+                        .fadeIn(duration: 400.ms)
+                        .slideY(begin: 0.1, end: 0),
+                    const SizedBox(height: 20),
+                  ],
+
+                  // Share My Screen Card (hidden on web)
+                  if (!kIsWeb)
+                    _buildShareCard(theme)
+                        .animate()
+                        .fadeIn(duration: 400.ms)
+                        .slideY(begin: 0.1, end: 0),
+
+                  // Manual Connection Card (for web)
+                  if (kIsWeb)
+                    _buildManualConnectionCard(theme)
+                        .animate()
+                        .fadeIn(duration: 400.ms)
+                        .slideY(begin: 0.1, end: 0),
 
                   const SizedBox(height: 32),
 
@@ -186,6 +254,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     _buildEmptyState(
                       theme,
                       isDiscovering,
+                      isDiscoverySupported,
                     ).animate().fadeIn(duration: 400.ms, delay: 200.ms)
                   else
                     ...devices.asMap().entries.map((entry) {
@@ -207,6 +276,132 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildWebPlatformNotice(ThemeData theme) {
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colorScheme.primary.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: colorScheme.primary.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              Icons.info_outline_rounded,
+              color: colorScheme.primary,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Running on Web',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Automatic device discovery is not available. Use manual connection to view shared screens.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurface.withOpacity(0.7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildManualConnectionCard(ThemeData theme) {
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF06B6D4).withOpacity(0.15),
+            const Color(0xFF0EA5E9).withOpacity(0.1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF06B6D4).withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: AppTheme.accentGradient,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF06B6D4).withOpacity(0.3),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.link_rounded,
+                  color: Colors.white,
+                  size: 32,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Connect Manually',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Enter the IP address of a device sharing its screen',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          GradientButton(
+            text: 'Enter Connection Details',
+            icon: Icons.add_link_rounded,
+            onPressed: _showManualConnectionDialog,
+            width: double.infinity,
+          ),
+        ],
       ),
     );
   }
@@ -317,11 +512,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             ),
           ),
         ),
+        const Spacer(),
+        if (kIsWeb)
+          TextButton.icon(
+            onPressed: _showManualConnectionDialog,
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Add'),
+          ),
       ],
     );
   }
 
-  Widget _buildEmptyState(ThemeData theme, bool isDiscovering) {
+  Widget _buildEmptyState(
+    ThemeData theme,
+    bool isDiscovering,
+    bool isDiscoverySupported,
+  ) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
       decoration: BoxDecoration(
@@ -338,14 +544,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               shape: BoxShape.circle,
             ),
             child: Icon(
-              isDiscovering ? Icons.radar_rounded : Icons.devices_rounded,
+              isDiscovering
+                  ? Icons.radar_rounded
+                  : (isDiscoverySupported
+                        ? Icons.devices_rounded
+                        : Icons.cloud_off_rounded),
               size: 48,
               color: theme.colorScheme.onSurface.withOpacity(0.4),
             ),
           ),
           const SizedBox(height: 24),
           Text(
-            isDiscovering ? 'Scanning for devices...' : 'No devices found',
+            isDiscovering
+                ? 'Scanning for devices...'
+                : (isDiscoverySupported
+                      ? 'No devices found'
+                      : 'Manual connection required'),
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w600,
             ),
@@ -354,7 +568,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           Text(
             isDiscovering
                 ? 'Looking for devices sharing their screen on this network'
-                : 'Make sure other devices are connected to the same WiFi network',
+                : (isDiscoverySupported
+                      ? 'Make sure other devices are connected to the same WiFi network'
+                      : 'Enter the IP address and port of a device sharing its screen'),
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurface.withOpacity(0.6),
             ),
@@ -362,11 +578,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
           if (!isDiscovering) ...[
             const SizedBox(height: 24),
-            OutlinedButton.icon(
-              onPressed: _startDiscovery,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Scan Again'),
-            ),
+            if (isDiscoverySupported)
+              OutlinedButton.icon(
+                onPressed: _startDiscovery,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Scan Again'),
+              )
+            else
+              FilledButton.icon(
+                onPressed: _showManualConnectionDialog,
+                icon: const Icon(Icons.link_rounded),
+                label: const Text('Connect Manually'),
+              ),
           ],
         ],
       ),

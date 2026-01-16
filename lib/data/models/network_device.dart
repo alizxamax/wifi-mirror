@@ -95,6 +95,7 @@ enum DeviceType {
   windows,
   macos,
   linux,
+  web,
   unknown;
 
   static DeviceType fromString(String value) {
@@ -116,6 +117,8 @@ enum DeviceType {
         return 'macOS';
       case DeviceType.linux:
         return 'Linux';
+      case DeviceType.web:
+        return 'Web';
       case DeviceType.unknown:
         return 'Unknown';
     }
@@ -133,6 +136,8 @@ enum DeviceType {
         return '🍎';
       case DeviceType.linux:
         return '🐧';
+      case DeviceType.web:
+        return '🌐';
       case DeviceType.unknown:
         return '❓';
     }
