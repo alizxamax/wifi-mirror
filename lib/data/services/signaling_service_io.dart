@@ -195,8 +195,17 @@ class SignalingPlatform {
     Socket? socket,
     WebSocket? webSocket,
   }) {
+    AppLogger.info(
+      'Received message: ${message.type} from ${message.senderId}',
+      _module,
+    );
+
     switch (message.type) {
       case SignalingType.joinRequest:
+        AppLogger.info(
+          'Processing join request from: ${message.senderId}',
+          _module,
+        );
         if (socket != null) {
           _connectedPeers[message.senderId] = socket;
         }
@@ -218,6 +227,10 @@ class SignalingPlatform {
 
     // Forward to target if specified
     if (message.targetId != null) {
+      AppLogger.info(
+        'Forwarding ${message.type} to target: ${message.targetId}',
+        _module,
+      );
       _forwardMessage(message);
     }
   }

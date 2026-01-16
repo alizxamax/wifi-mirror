@@ -50,18 +50,62 @@ class WebRTCService {
 
   WebRTCService(this._signalingService);
 
-  /// WebRTC configuration
-  final Map<String, dynamic> _configuration = {
-    'iceServers': [
-      {'urls': 'stun:stun.l.google.com:19302'},
-      {'urls': 'stun:stun1.l.google.com:19302'},
-    ],
-    'sdpSemantics': 'unified-plan',
-  };
+  /// Whether to force relay mode (for mobile hotspots with AP isolation)
+  bool _forceRelayMode = false;
+
+  /// Set force relay mode (must be called before createPeerConnection)
+  void setForceRelayMode(bool forceRelay) {
+    _forceRelayMode = forceRelay;
+    AppLogger.info(
+      'Force relay mode: ${forceRelay ? 'enabled' : 'disabled'}',
+      _module,
+    );
+  }
+
+  /// Get WebRTC configuration with STUN and TURN servers
+  /// TURN servers are essential for mobile hotspots which have AP isolation enabled
+  Map<String, dynamic> get _configuration {
+    AppLogger.info('Creating ICE config: forceRelay=$_forceRelayMode', _module);
+
+    return {
+      'iceServers': <Map<String, dynamic>>[
+        // Google STUN servers (free, reliable)
+        {'urls': 'stun:stun.l.google.com:19302'},
+        {'urls': 'stun:stun1.l.google.com:19302'},
+        {'urls': 'stun:stun2.l.google.com:19302'},
+        {'urls': 'stun:stun3.l.google.com:19302'},
+        {'urls': 'stun:stun4.l.google.com:19302'},
+
+        // Twilio STUN (generally reliable)
+        {'urls': 'stun:global.stun.twilio.com:3478'},
+
+        // Metered.ca TURN servers (free tier - more reliable)
+        // These allow relay of media when direct P2P is blocked
+        {
+          'urls': [
+            'turn:a.relay.metered.ca:80',
+            'turn:a.relay.metered.ca:80?transport=tcp',
+            'turn:a.relay.metered.ca:443',
+            'turn:a.relay.metered.ca:443?transport=tcp',
+          ],
+          'username': 'e8dd65c92e326d5e0dff6a9d',
+          'credential': 'YhNjCYdUoYCiUWbd',
+        },
+      ],
+      'sdpSemantics': 'unified-plan',
+      // 'relay' forces TURN-only connections (slower but works with AP isolation)
+      // 'all' allows both direct and relay connections (preferred when possible)
+      'iceTransportPolicy': _forceRelayMode ? 'relay' : 'all',
+    };
+  }
 
   /// Initialize the WebRTC service
-  Future<void> initialize(String deviceId) async {
+  Future<void> initialize(
+    String deviceId, {
+    bool forceRelayMode = false,
+  }) async {
     _localDeviceId = deviceId;
+    _forceRelayMode = forceRelayMode;
 
     await localRenderer.initialize();
     await remoteRenderer.initialize();
@@ -69,7 +113,10 @@ class WebRTCService {
     // Listen for signaling messages
     _signalingService.messageStream.listen(_handleSignalingMessage);
 
-    AppLogger.info('WebRTC service initialized', _module);
+    AppLogger.info(
+      'WebRTC service initialized (forceRelay: $forceRelayMode)',
+      _module,
+    );
   }
 
   /// Start sharing screen (as host)
@@ -213,14 +260,36 @@ class WebRTCService {
     _peerConnection!.onTrack = _handleTrack;
     _peerConnection!.onRenegotiationNeeded = _handleRenegotiationNeeded;
 
-    AppLogger.info('Peer connection created', _module);
+    // ICE gathering state handler
+    _peerConnection!.onIceGatheringState = (RTCIceGatheringState state) {
+      AppLogger.info('ICE gathering state: $state', _module);
+      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+        AppLogger.info('ICE gathering complete!', _module);
+      }
+    };
+
+    AppLogger.info('Peer connection created with all handlers', _module);
   }
 
   /// Handle ICE candidate
   void _handleIceCandidate(RTCIceCandidate candidate) {
-    AppLogger.debug('ICE candidate: ${candidate.candidate}', _module);
+    // Parse candidate type for logging
+    final candidateStr = candidate.candidate ?? '';
+    String candidateType = 'unknown';
+    if (candidateStr.contains('typ host')) {
+      candidateType = 'host';
+    } else if (candidateStr.contains('typ srflx')) {
+      candidateType = 'srflx (STUN)';
+    } else if (candidateStr.contains('typ relay')) {
+      candidateType = 'relay (TURN)';
+    } else if (candidateStr.contains('typ prflx')) {
+      candidateType = 'prflx';
+    }
+
+    AppLogger.info('ICE candidate generated: type=$candidateType', _module);
 
     if (_remoteDeviceId != null) {
+      AppLogger.info('Sending ICE candidate to: $_remoteDeviceId', _module);
       _signalingService.sendMessage(
         SignalingMessage.iceCandidate(
           senderId: _localDeviceId!,
@@ -230,6 +299,7 @@ class WebRTCService {
       );
     } else if (_isHost) {
       // Broadcast to all viewers
+      AppLogger.info('Broadcasting ICE candidate (host mode)', _module);
       _signalingService.sendMessage(
         SignalingMessage(
           type: SignalingType.iceCandidate,
@@ -237,28 +307,60 @@ class WebRTCService {
           payload: candidate.toMap(),
         ),
       );
+    } else {
+      AppLogger.warning(
+        'ICE candidate generated but no remote device ID set!',
+        _module,
+      );
     }
   }
 
   /// Handle ICE connection state changes
   void _handleIceConnectionState(RTCIceConnectionState state) {
-    AppLogger.info('ICE connection state: $state', _module);
+    AppLogger.info('ICE connection state changed: $state', _module);
 
     switch (state) {
+      case RTCIceConnectionState.RTCIceConnectionStateNew:
+        AppLogger.debug('ICE: New - Starting ICE negotiation', _module);
+        break;
+      case RTCIceConnectionState.RTCIceConnectionStateChecking:
+        AppLogger.debug('ICE: Checking - Validating candidates...', _module);
+        break;
       case RTCIceConnectionState.RTCIceConnectionStateConnected:
+        AppLogger.info(
+          'ICE: Connected! Peer-to-peer link established',
+          _module,
+        );
+        _updateConnectionState(WebRTCConnectionState.connected);
+        break;
       case RTCIceConnectionState.RTCIceConnectionStateCompleted:
+        AppLogger.info('ICE: Completed - All candidates processed', _module);
         _updateConnectionState(WebRTCConnectionState.connected);
         break;
       case RTCIceConnectionState.RTCIceConnectionStateDisconnected:
+        AppLogger.warning(
+          'ICE: Disconnected - Connection lost, may reconnect',
+          _module,
+        );
         _updateConnectionState(WebRTCConnectionState.reconnecting);
         break;
       case RTCIceConnectionState.RTCIceConnectionStateFailed:
+        AppLogger.error(
+          'ICE: FAILED - Could not establish connection. '
+          'This often happens with mobile hotspots due to AP isolation. '
+          'Try enabling "Force Relay Mode" in Settings.',
+          null,
+          null,
+          _module,
+        );
         _updateConnectionState(WebRTCConnectionState.error);
         break;
       case RTCIceConnectionState.RTCIceConnectionStateClosed:
+        AppLogger.info('ICE: Closed - Connection terminated', _module);
         _updateConnectionState(WebRTCConnectionState.disconnected);
         break;
       default:
+        AppLogger.debug('ICE: Unknown state - $state', _module);
         break;
     }
   }
@@ -266,15 +368,55 @@ class WebRTCService {
   /// Handle peer connection state changes
   void _handleConnectionState(RTCPeerConnectionState state) {
     AppLogger.info('Peer connection state: $state', _module);
+
+    // Also update our connection state based on peer connection state
+    switch (state) {
+      case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+        _updateConnectionState(WebRTCConnectionState.connected);
+        break;
+      case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+        _updateConnectionState(WebRTCConnectionState.error);
+        break;
+      case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+        _updateConnectionState(WebRTCConnectionState.disconnected);
+        break;
+      case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+        _updateConnectionState(WebRTCConnectionState.reconnecting);
+        break;
+      default:
+        break;
+    }
   }
 
   /// Handle incoming track (remote stream)
   void _handleTrack(RTCTrackEvent event) {
+    AppLogger.info(
+      'Track event received: track.kind=${event.track.kind}, streams=${event.streams.length}',
+      _module,
+    );
+
     if (event.streams.isNotEmpty) {
       _remoteStream = event.streams[0];
       remoteRenderer.srcObject = _remoteStream;
       _startMetricsCollection();
-      AppLogger.info('Remote stream received', _module);
+
+      AppLogger.info(
+        'Remote stream attached to renderer: streamId=${_remoteStream?.id}, tracks=${_remoteStream?.getTracks().length}',
+        _module,
+      );
+
+      // Log video track details
+      final videoTracks = _remoteStream?.getVideoTracks();
+      if (videoTracks != null && videoTracks.isNotEmpty) {
+        AppLogger.info(
+          'Video track: id=${videoTracks.first.id}, enabled=${videoTracks.first.enabled}',
+          _module,
+        );
+      } else {
+        AppLogger.warning('No video tracks in remote stream!', _module);
+      }
+    } else {
+      AppLogger.warning('Track event received but no streams!', _module);
     }
   }
 
@@ -437,10 +579,30 @@ class WebRTCService {
 
   /// Handle incoming ICE candidate
   Future<void> _handleRemoteIceCandidate(SignalingMessage message) async {
-    if (_peerConnection == null) return;
+    if (_peerConnection == null) {
+      AppLogger.warning(
+        'Received ICE candidate but peer connection is null!',
+        _module,
+      );
+      return;
+    }
 
     try {
       final candidateMap = message.payload as Map<String, dynamic>;
+      final candidateStr = candidateMap['candidate'] as String? ?? '';
+
+      // Parse candidate type for logging
+      String candidateType = 'unknown';
+      if (candidateStr.contains('typ host')) {
+        candidateType = 'host';
+      } else if (candidateStr.contains('typ srflx')) {
+        candidateType = 'srflx (STUN)';
+      } else if (candidateStr.contains('typ relay')) {
+        candidateType = 'relay (TURN)';
+      } else if (candidateStr.contains('typ prflx')) {
+        candidateType = 'prflx';
+      }
+
       final candidate = RTCIceCandidate(
         candidateMap['candidate'] as String?,
         candidateMap['sdpMid'] as String?,
@@ -448,7 +610,10 @@ class WebRTCService {
       );
 
       await _peerConnection!.addCandidate(candidate);
-      AppLogger.debug('Added ICE candidate from: ${message.senderId}', _module);
+      AppLogger.info(
+        'Added remote ICE candidate: type=$candidateType, from=${message.senderId}',
+        _module,
+      );
     } catch (e) {
       AppLogger.error('Failed to add ICE candidate', e, null, _module);
     }

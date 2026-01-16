@@ -102,6 +102,7 @@ class AppSettings {
   final String deviceName;
   final bool autoConnect;
   final bool showCursor;
+  final bool forceRelayMode;
 
   const AppSettings({
     this.quality = StreamingQuality.medium,
@@ -109,6 +110,7 @@ class AppSettings {
     this.deviceName = 'My Device',
     this.autoConnect = false,
     this.showCursor = true,
+    this.forceRelayMode = false,
   });
 
   AppSettings copyWith({
@@ -117,6 +119,7 @@ class AppSettings {
     String? deviceName,
     bool? autoConnect,
     bool? showCursor,
+    bool? forceRelayMode,
   }) {
     return AppSettings(
       quality: quality ?? this.quality,
@@ -124,6 +127,7 @@ class AppSettings {
       deviceName: deviceName ?? this.deviceName,
       autoConnect: autoConnect ?? this.autoConnect,
       showCursor: showCursor ?? this.showCursor,
+      forceRelayMode: forceRelayMode ?? this.forceRelayMode,
     );
   }
 }
@@ -155,6 +159,10 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
 
   void setShowCursor(bool show) {
     state = state.copyWith(showCursor: show);
+  }
+
+  void setForceRelayMode(bool forceRelay) {
+    state = state.copyWith(forceRelayMode: forceRelay);
   }
 }
 
@@ -208,8 +216,14 @@ class ScreenSharingController {
         throw Exception('Local device not initialized');
       }
 
+      // Get force relay mode setting
+      final forceRelayMode = _ref.read(appSettingsProvider).forceRelayMode;
+
       signalingService.initialize(localDevice.id);
-      await webrtcService.initialize(localDevice.id);
+      await webrtcService.initialize(
+        localDevice.id,
+        forceRelayMode: forceRelayMode,
+      );
 
       // Start signaling server
       await signalingService.startServer();
@@ -277,8 +291,14 @@ class ScreenSharingController {
         throw Exception('Local device not initialized');
       }
 
+      // Get force relay mode setting
+      final forceRelayMode = _ref.read(appSettingsProvider).forceRelayMode;
+
       signalingService.initialize(localDevice.id);
-      await webrtcService.initialize(localDevice.id);
+      await webrtcService.initialize(
+        localDevice.id,
+        forceRelayMode: forceRelayMode,
+      );
 
       // Connect to host's signaling server
       await signalingService.connectToServer(
