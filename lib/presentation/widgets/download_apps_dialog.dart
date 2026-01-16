@@ -97,7 +97,7 @@ class DownloadAppsDialog extends StatelessWidget {
                       'Low latency',
                     ],
                     downloadUrl:
-                        'https://github.com/user/wifi-mirror/releases/latest/download/wifi-mirror.apk',
+                        'https://github.com/navneetprajapati26/wifi-mirror/releases/latest/download/wifi-mirror.apk',
                     buttonText: 'Download APK',
                   ),
 
@@ -117,11 +117,22 @@ class DownloadAppsDialog extends StatelessWidget {
                       'M1/M2 optimized',
                     ],
                     downloadUrl:
-                        'https://github.com/user/wifi-mirror/releases/latest/download/wifi-mirror.dmg',
+                        'https://github.com/navneetprajapati26/wifi-mirror/releases/latest/download/wifi-mirror.dmg',
                     buttonText: 'Download DMG',
                   ),
 
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
+
+                  // View all releases button
+                  TextButton.icon(
+                    onPressed: () => _launchUrl(
+                      'https://github.com/navneetprajapati26/wifi-mirror/releases',
+                    ),
+                    icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                    label: const Text('View All Releases on GitHub'),
+                  ),
+
+                  const SizedBox(height: 16),
 
                   // Note
                   Container(

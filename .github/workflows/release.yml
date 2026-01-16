@@ -1,0 +1,180 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'  # Adjust to your Flutter version
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/wifi-mirror.apk
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/wifi-mirror.apk
+
+  build-macos:
+    name: Build macOS App
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'  # Adjust to your Flutter version
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Create DMG
+        run: |
+          # Install create-dmg
+          brew install create-dmg
+          
+          # Create DMG
+          create-dmg \
+            --volname "WiFi Mirror" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "wifi_mirror.app" 150 185 \
+            --app-drop-link 450 185 \
+            build/wifi-mirror.dmg \
+            build/macos/Build/Products/Release/wifi_mirror.app || true
+          
+          # If create-dmg fails, create a simple zip
+          if [ ! -f build/wifi-mirror.dmg ]; then
+            cd build/macos/Build/Products/Release
+            zip -r ../../../../wifi-mirror-macos.zip wifi_mirror.app
+            cd ../../../../
+            mv wifi-mirror-macos.zip wifi-mirror.dmg
+          fi
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: build/wifi-mirror.dmg
+
+  build-web:
+    name: Build Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build Web
+        run: flutter build web --release --base-href="/wifi-mirror/"
+
+      - name: Upload Web Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+
+  release:
+    name: Create Release
+    needs: [build-android, build-macos, build-web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: release/
+
+      - name: Download macOS DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: release/
+
+      - name: Download Web Build
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: release/web/
+
+      - name: Zip Web Build
+        run: |
+          cd release
+          zip -r wifi-mirror-web.zip web/
+          rm -rf web/
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: WiFi Mirror ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## WiFi Mirror ${{ steps.get_version.outputs.VERSION }}
+            
+            ### Downloads
+            - **Android**: Download `wifi-mirror.apk` and install on your device
+            - **macOS**: Download `wifi-mirror.dmg` and drag to Applications
+            - **Web**: Visit [WiFi Mirror Web](https://navneetprajapati26.github.io/wifi-mirror/)
+            
+            ### What's New
+            - See commit history for changes
+            
+            ### Installation Notes
+            - **Android**: Enable "Install from unknown sources" in settings
+            - **macOS**: Right-click and select "Open" if blocked by Gatekeeper
+          files: |
+            release/wifi-mirror.apk
+            release/wifi-mirror.dmg
+            release/wifi-mirror-web.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
