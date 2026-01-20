@@ -2,12 +2,12 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/logger.dart';
 import '../../data/models/models.dart';
 import '../../providers/providers.dart';
 import '../../providers/router.dart';
+import 'package:go_router/go_router.dart';
 
 // Conditional import for web URL access
 import 'quick_connect_card_stub.dart'
@@ -93,7 +93,7 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
             color: theme.colorScheme.surfaceContainer,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: theme.colorScheme.outlineVariant.withOpacity(0.5),
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
               width: 1,
             ),
           ),
@@ -134,7 +134,9 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
                             Text(
                               'Connection details from shared link',
                               style: theme.textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurface.withOpacity(0.6),
+                                color: colorScheme.onSurface.withValues(
+                                  alpha: 0.6,
+                                ),
                               ),
                             ),
                           ],
@@ -149,7 +151,7 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
                         },
                         icon: Icon(
                           Icons.close,
-                          color: colorScheme.onSurface.withOpacity(0.5),
+                          color: colorScheme.onSurface.withValues(alpha: 0.5),
                         ),
                         tooltip: 'Dismiss',
                       ),
@@ -165,8 +167,8 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
                       color: colorScheme.surface,
                       borderRadius: BorderRadius.circular(14),
                       border: Border.all(
-                        color: theme.colorScheme.outlineVariant.withOpacity(
-                          0.3,
+                        color: theme.colorScheme.outlineVariant.withValues(
+                          alpha: 0.3,
                         ),
                       ),
                     ),
@@ -195,8 +197,8 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
                                   Text(
                                     'IP Address',
                                     style: theme.textTheme.labelSmall?.copyWith(
-                                      color: colorScheme.onSurface.withOpacity(
-                                        0.5,
+                                      color: colorScheme.onSurface.withValues(
+                                        alpha: 0.5,
                                       ),
                                     ),
                                   ),
@@ -216,7 +218,9 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
                         ),
 
                         const SizedBox(height: 12),
-                        Divider(color: colorScheme.outline.withOpacity(0.1)),
+                        Divider(
+                          color: colorScheme.outline.withValues(alpha: 0.1),
+                        ),
                         const SizedBox(height: 12),
 
                         // Port row
@@ -242,8 +246,8 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
                                   Text(
                                     'Port',
                                     style: theme.textTheme.labelSmall?.copyWith(
-                                      color: colorScheme.onSurface.withOpacity(
-                                        0.5,
+                                      color: colorScheme.onSurface.withValues(
+                                        alpha: 0.5,
                                       ),
                                     ),
                                   ),
@@ -272,10 +276,10 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: AppTheme.error.withOpacity(0.1),
+                        color: AppTheme.error.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
-                          color: AppTheme.error.withOpacity(0.3),
+                          color: AppTheme.error.withValues(alpha: 0.3),
                         ),
                       ),
                       child: Row(
@@ -310,7 +314,7 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: theme.colorScheme.primary,
                         foregroundColor: theme.colorScheme.onPrimary,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        padding: const EdgeInsets.symmetric(vertical: 16,horizontal: 8),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),
@@ -354,7 +358,7 @@ class _QuickConnectCardState extends ConsumerState<QuickConnectCard> {
         .shimmer(
           delay: 500.ms,
           duration: 1500.ms,
-          color: theme.colorScheme.primary.withOpacity(0.1),
+          color: theme.colorScheme.primary.withValues(alpha: 0.1),
         );
   }
 

@@ -285,13 +285,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         ],
       ),
       actions: [
-        if (isDiscoverySupported)
-          _buildActionButton(
-            icon: Icons.refresh_rounded,
-            onTap: _startDiscovery,
-            isAnimating: isDiscovering,
-            isLargeScreen: isLargeScreen,
-          ),
+        // if (isDiscoverySupported)
+        //   _buildActionButton(
+        //     icon: Icons.refresh_rounded,
+        //     onTap: _startDiscovery,
+        //     isAnimating: isDiscovering,
+        //     isLargeScreen: isLargeScreen,
+        //   ),
         SizedBox(width: isLargeScreen ? 8 : 4),
         _buildActionButton(
           icon: Icons.settings_rounded,

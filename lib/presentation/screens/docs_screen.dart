@@ -166,7 +166,7 @@ class _DocsScreenState extends State<DocsScreen>
           if (isLargeScreen)
             OutlinedButton.icon(
               onPressed: () {
-                launchUrl(Uri.parse('https://github.com/yourrepo/wifi-mirror'));
+                launchUrl(Uri.parse('https://github.com/navneetprajapati26/wifi-mirror'));
               },
               icon: const Icon(Icons.code_rounded, size: 18),
               label: const Text('View on GitHub'),
