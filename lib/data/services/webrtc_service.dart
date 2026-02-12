@@ -99,13 +99,19 @@ class WebRTCService {
   }
 
   /// Start sharing screen (as host) - supports multiple viewers
-  Future<void> startScreenShare() async {
+  Future<void> startScreenShare({
+    bool includeAudio = true,
+    CropSettings cropSettings = const CropSettings(),
+  }) async {
     _isHost = true;
     _updateConnectionState(WebRTCConnectionState.connecting);
 
     try {
       // Start screen capture
-      _localStream = await _getScreenStream();
+      _localStream = await _getScreenStream(
+        includeAudio: includeAudio,
+        cropSettings: cropSettings,
+      );
 
       if (_localStream != null) {
         localRenderer.srcObject = _localStream;
@@ -125,7 +131,10 @@ class WebRTCService {
   }
 
   /// Get screen capture stream
-  Future<MediaStream?> _getScreenStream() async {
+  Future<MediaStream?> _getScreenStream({
+    required bool includeAudio,
+    required CropSettings cropSettings,
+  }) async {
     try {
       if (Platform.isAndroid) {
         try {
@@ -153,8 +162,10 @@ class WebRTCService {
           'height': {'ideal': _quality.height},
           'frameRate': {'ideal': _quality.frameRate},
         },
-        'audio': false,
+        'audio': includeAudio,
       });
+
+      await _applyCropToVideoTrack(stream, cropSettings);
 
       AppLogger.info('Got screen stream: ${stream.id}', _module);
       return stream;
@@ -176,14 +187,81 @@ class WebRTCService {
             'height': {'ideal': _quality.height},
             'frameRate': {'ideal': _quality.frameRate},
           },
-          'audio': false,
+          'audio': includeAudio,
         });
+        await _applyCropToVideoTrack(stream, cropSettings);
         AppLogger.info('Using camera as fallback for screen share', _module);
         return stream;
       } catch (e2) {
         AppLogger.error('Fallback also failed', e2, null, _module);
         return null;
       }
+    }
+  }
+
+  Future<void> _applyCropToVideoTrack(
+    MediaStream stream,
+    CropSettings cropSettings,
+  ) async {
+    final videoTrack = stream.getVideoTracks().isNotEmpty
+        ? stream.getVideoTracks().first
+        : null;
+
+    if (videoTrack == null) return;
+
+    final hasCrop =
+        cropSettings.topPercent > 0 ||
+        cropSettings.bottomPercent > 0 ||
+        cropSettings.leftPercent > 0 ||
+        cropSettings.rightPercent > 0 ||
+        cropSettings.aspectRatio != CropAspectRatio.free;
+
+    if (!hasCrop) return;
+
+    var widthScale =
+        (100 - cropSettings.leftPercent - cropSettings.rightPercent) / 100;
+    var heightScale =
+        (100 - cropSettings.topPercent - cropSettings.bottomPercent) / 100;
+
+    if (widthScale <= 0 || heightScale <= 0) {
+      AppLogger.warning(
+        'Invalid crop settings detected, skipping crop',
+        _module,
+      );
+      return;
+    }
+
+    final selectedAspect = cropSettings.aspectRatio.value;
+    if (selectedAspect != null) {
+      final currentAspect =
+          (_quality.width * widthScale) / (_quality.height * heightScale);
+      if (currentAspect > selectedAspect) {
+        widthScale =
+            (heightScale * _quality.height * selectedAspect) / _quality.width;
+      } else {
+        heightScale =
+            (widthScale * _quality.width / selectedAspect) / _quality.height;
+      }
+    }
+
+    try {
+      await videoTrack.applyConstraints({
+        'advanced': [
+          {
+            'width': {'ideal': (_quality.width * widthScale).round()},
+            'height': {'ideal': (_quality.height * heightScale).round()},
+          },
+        ],
+      });
+      AppLogger.info(
+        'Applied crop constraints: ${(_quality.width * widthScale).round()}x${(_quality.height * heightScale).round()}',
+        _module,
+      );
+    } catch (e) {
+      AppLogger.warning(
+        'Crop constraints not supported on this platform: $e',
+        _module,
+      );
     }
   }
 
