@@ -165,7 +165,7 @@ class _WebServerCardState extends ConsumerState<WebServerCard> {
   String _getAutoConnectUrl(WebServerStatus status) {
     if (status.ipAddress == null) return status.url ?? '';
     // The default signaling port is service port + 1
-    final signalingPort = AppConstants.servicePort;
+    final signalingPort = AppConstants.signalingPort;
     return '${status.url}/connect?host=${status.ipAddress}&port=$signalingPort';
   }
 
@@ -241,6 +241,14 @@ class _WebServerCardState extends ConsumerState<WebServerCard> {
                 fontWeight: FontWeight.w500,
                 color: colorScheme.onSurface,
               ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SelectableText(
+            'Open on this device: http://localhost:${status.port}',
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontFamily: 'monospace',
+              color: colorScheme.onSurface.withOpacity(0.75),
             ),
           ),
           const SizedBox(height: 12),
