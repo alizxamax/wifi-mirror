@@ -4,7 +4,7 @@
 
 WiFi Mirror enables real-time screen sharing between devices connected to the same local network. Built with Flutter, it supports **Android**, **iOS**, **macOS**, **Windows**, **Linux**, and **Web** platforms with seamless peer-to-peer connectivity.
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![Flutter](https://img.shields.io/badge/Flutter-3.10+-02569B?logo=flutter)
 ![Platforms](https://img.shields.io/badge/platforms-Android%20|%20iOS%20|%20macOS%20|%20Windows%20|%20Linux%20|%20Web-green)
 

@@ -2,7 +2,7 @@ name: WifiMirror
 description: "Cross-platform screen sharing app for local WiFi networks"
 publish_to: 'none'
 
-version: 1.1.1+3
+version: 1.2.0+4
 
 environment:
   sdk: ^3.8.0
