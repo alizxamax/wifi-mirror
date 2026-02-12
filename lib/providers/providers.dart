@@ -120,6 +120,8 @@ class AppSettings {
   final String deviceName;
   final bool autoConnect;
   final bool showCursor;
+  final bool shareAudio;
+  final CropSettings cropSettings;
 
   const AppSettings({
     this.quality = StreamingQuality.medium,
@@ -127,6 +129,8 @@ class AppSettings {
     this.deviceName = 'My Device',
     this.autoConnect = false,
     this.showCursor = true,
+    this.shareAudio = true,
+    this.cropSettings = const CropSettings(),
   });
 
   AppSettings copyWith({
@@ -135,6 +139,8 @@ class AppSettings {
     String? deviceName,
     bool? autoConnect,
     bool? showCursor,
+    bool? shareAudio,
+    CropSettings? cropSettings,
   }) {
     return AppSettings(
       quality: quality ?? this.quality,
@@ -142,6 +148,8 @@ class AppSettings {
       deviceName: deviceName ?? this.deviceName,
       autoConnect: autoConnect ?? this.autoConnect,
       showCursor: showCursor ?? this.showCursor,
+      shareAudio: shareAudio ?? this.shareAudio,
+      cropSettings: cropSettings ?? this.cropSettings,
     );
   }
 }
@@ -173,6 +181,44 @@ class AppSettingsNotifier extends StateNotifier<AppSettings> {
 
   void setShowCursor(bool show) {
     state = state.copyWith(showCursor: show);
+  }
+
+  void setShareAudio(bool enabled) {
+    state = state.copyWith(shareAudio: enabled);
+  }
+
+  void setCropTop(double value) {
+    state = state.copyWith(
+      cropSettings: state.cropSettings.copyWith(topPercent: value),
+    );
+  }
+
+  void setCropBottom(double value) {
+    state = state.copyWith(
+      cropSettings: state.cropSettings.copyWith(bottomPercent: value),
+    );
+  }
+
+  void setCropLeft(double value) {
+    state = state.copyWith(
+      cropSettings: state.cropSettings.copyWith(leftPercent: value),
+    );
+  }
+
+  void setCropRight(double value) {
+    state = state.copyWith(
+      cropSettings: state.cropSettings.copyWith(rightPercent: value),
+    );
+  }
+
+  void setCropAspectRatio(CropAspectRatio aspectRatio) {
+    state = state.copyWith(
+      cropSettings: state.cropSettings.copyWith(aspectRatio: aspectRatio),
+    );
+  }
+
+  void resetCrop() {
+    state = state.copyWith(cropSettings: const CropSettings());
   }
 }
 
@@ -239,7 +285,11 @@ class ScreenSharingController {
       await signalingService.startServer();
 
       // Start screen capture
-      await webrtcService.startScreenShare();
+      final appSettings = _ref.read(appSettingsProvider);
+      await webrtcService.startScreenShare(
+        includeAudio: appSettings.shareAudio,
+        cropSettings: appSettings.cropSettings,
+      );
 
       // Update broadcast to indicate we're sharing
       await discoveryService.updateBroadcast(isSharing: true);
