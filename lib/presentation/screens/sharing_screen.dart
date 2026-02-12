@@ -228,6 +228,10 @@ class _SharingScreenState extends ConsumerState<SharingScreen> {
                       // Detailed Metrics (Latency, Bitrate...)
                       _buildDetailedMetrics(context, theme),
 
+                      const SizedBox(height: 16),
+
+                      _buildAudioAndCropControls(theme),
+
                       // Extra space at bottom to ensure scrolling sees everything
                       // before the pinned button.
                       const SizedBox(height: 80),
@@ -421,6 +425,118 @@ class _SharingScreenState extends ConsumerState<SharingScreen> {
         .fadeIn(duration: 400.ms, delay: 400.ms);
   }
 
+  Widget _buildAudioAndCropControls(ThemeData theme) {
+    final settings = ref.watch(appSettingsProvider);
+    final notifier = ref.read(appSettingsProvider.notifier);
+
+    Widget sliderRow({
+      required String label,
+      required double value,
+      required ValueChanged<double> onChanged,
+    }) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(label, style: theme.textTheme.labelLarge),
+              const Spacer(),
+              Text('${value.toStringAsFixed(0)}%'),
+            ],
+          ),
+          Slider(
+            value: value,
+            min: 0,
+            max: 40,
+            divisions: 40,
+            label: '${value.toStringAsFixed(0)}%',
+            onChanged: onChanged,
+          ),
+        ],
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Audio & Crop',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Share phone audio'),
+            subtitle: const Text('Include device/system audio in stream'),
+            value: settings.shareAudio,
+            onChanged: notifier.setShareAudio,
+          ),
+          const Divider(),
+          DropdownButtonFormField<CropAspectRatio>(
+            value: settings.cropSettings.aspectRatio,
+            decoration: const InputDecoration(
+              labelText: 'Crop aspect ratio',
+              border: OutlineInputBorder(),
+            ),
+            items: CropAspectRatio.values
+                .map(
+                  (ratio) => DropdownMenuItem<CropAspectRatio>(
+                    value: ratio,
+                    child: Text(ratio.label),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value != null) {
+                notifier.setCropAspectRatio(value);
+              }
+            },
+          ),
+          const SizedBox(height: 8),
+          sliderRow(
+            label: 'Top crop',
+            value: settings.cropSettings.topPercent,
+            onChanged: notifier.setCropTop,
+          ),
+          sliderRow(
+            label: 'Bottom crop',
+            value: settings.cropSettings.bottomPercent,
+            onChanged: notifier.setCropBottom,
+          ),
+          sliderRow(
+            label: 'Left crop',
+            value: settings.cropSettings.leftPercent,
+            onChanged: notifier.setCropLeft,
+          ),
+          sliderRow(
+            label: 'Right crop',
+            value: settings.cropSettings.rightPercent,
+            onChanged: notifier.setCropRight,
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: notifier.resetCrop,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Reset crop'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPreview(
     BuildContext context,
     ThemeData theme, {
@@ -556,6 +672,10 @@ class _SharingScreenState extends ConsumerState<SharingScreen> {
 
         // Detailed Metrics (Latency, Bitrate...)
         _buildDetailedMetrics(context, theme),
+
+        const SizedBox(height: 16),
+
+        _buildAudioAndCropControls(theme),
 
         const SizedBox(height: 24),
 
